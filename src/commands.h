@@ -181,6 +181,7 @@ protected:
 	clipp::group do_group() override;
 	int do_run() override;
 	std::string do_doc() override;
+	void convert_cl_to_conf() override;
 
 private:
 	enum class modes
@@ -205,6 +206,7 @@ private:
 	fs::path rc_path_;
 	bool force_ = false;
 	std::string suffix_;
+	std::string branch_;
 
 
 	int do_devbuild();

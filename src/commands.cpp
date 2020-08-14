@@ -63,19 +63,19 @@ clipp::group command::common_options_group()
 			% "path to the ini file",
 
 		(clipp::option("--dry") >> o.dry)
-			%  "simulates filesystem operations",
+			% "simulates filesystem operations",
 
 		(clipp::option("-l", "--log-level")
-			&  clipp::value("LEVEL") >> o.output_log_level)
-			%  "0 is silent, 6 is max",
+			& clipp::value("LEVEL") >> o.output_log_level)
+			% "0 is silent, 6 is max",
 
 		(clipp::option("--file-log-level")
-			&  clipp::value("LEVEL") >> o.file_log_level)
-			%  "overrides --log-level for the log file",
+			& clipp::value("LEVEL") >> o.file_log_level)
+			% "overrides --log-level for the log file",
 
 		(clipp::option("--log-file")
-			&  clipp::value("FILE") >> o.log_file)
-			%  "path to log file",
+			& clipp::value("FILE") >> o.log_file)
+			% "path to log file",
 
 		(clipp::option("-d", "--destination")
 			& clipp::value("DIR") >> o.prefix)
@@ -856,10 +856,27 @@ clipp::group release_command::do_group()
 		|
 
 		"official" %
-		(clipp::command("official").set(mode_, modes::official)
-
+		(clipp::command("official").set(mode_, modes::official),
+			(clipp::value("branch") >> branch_)
+				% "use this branch in the super repos"
 		)
 	);
+}
+
+void release_command::convert_cl_to_conf()
+{
+	command::convert_cl_to_conf();
+
+	if (mode_ == modes::official)
+	{
+		common.options.push_back("task/mo_branch=" + branch_);
+		common.options.push_back("translations:task/enabled=true");
+		common.options.push_back("installer:task/enabled=true");
+
+		common.options.push_back("transifex/force=true");
+		common.options.push_back("transifex/configure=true");
+		common.options.push_back("transifex/pull=true");
+	}
 }
 
 int release_command::do_run()
@@ -907,6 +924,42 @@ int release_command::do_official()
 {
 	set_sigint_handler();
 
+	u8cout << "checking repos for branch " << branch_ << "...\n";
+
+	thread_pool tp;
+	std::atomic<bool> failed = false;
+
+	for (const auto* t : find_tasks("super"))
+	{
+		if (!t->enabled())
+			continue;
+
+		tp.add([this, t, &failed]
+		{
+			const auto* o = dynamic_cast<const modorganizer*>(t);
+
+			if (!git::branch_exists(o->git_url(), branch_))
+			{
+				gcx().error(context::generic,
+					"branch {} doesn't exist in the {} repo",
+					branch_, o->name());
+
+				failed = true;
+			}
+		});
+	}
+
+	tp.join();
+
+	if (failed)
+	{
+		gcx().bail_out(context::generic,
+			"either fix the branch name, create a remote branch for the "
+			"repos that don't have it, or disable tasks with "
+			"`-s TASKNAME:task/enabled=false`");
+	}
+
+
 	if (fs::exists(paths::prefix()))
 	{
 		u8cout
@@ -926,11 +979,6 @@ int release_command::do_official()
 			return 1;
 		}
 	}
-
-	conf::set_for_task("_override", "task", "enabled", "true");
-	conf::set_global("transifex", "force", "true");
-	conf::set_global("transifex", "configure", "true");
-	conf::set_global("transifex", "pull", "true");
 
 	run_all_tasks();
 	build_command::terminate_msbuild();
